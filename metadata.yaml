@@ -1,6 +1,6 @@
 name: msg_hook # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
 display_name: msg_hook # 用于展示的名字，可以是方便人类阅读的名字（需要版本 >= v4.5.0，低版本不会报错，请放心填写）
 desc: HTTP 消息转发插件，通过 HTTP 接口接收消息并转发到指定 QQ 群。 # 插件简短描述
-version: v1.1.1 # 插件版本号。格式：v1.1.1 或者 v1.1
+version: v1.1.2 # 插件版本号。格式：v1.1.1 或者 v1.1
 author: MinecraftNekoServer # 作者
 repo: https://github.com/MinecraftNekoServer/astrbot_msg_hook # 插件的仓库地址

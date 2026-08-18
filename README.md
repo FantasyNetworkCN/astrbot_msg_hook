@@ -26,6 +26,7 @@ HTTP 消息转发插件，通过 HTTP 接口接收消息并转发到指定 QQ �
 | server_port | HTTP 服务器端口 | 8080 |
 | api_token | API 访问令牌（留空则不验证） | 空 |
 | target_groups | 目标 QQ 群号列表 | 空 |
+| target_sessions | 目标群会话标识（由指令自动维护） | 空 |
 | enable_forward | 启用消息转发 | true |
 | message_prefix | 消息前缀 | 空 |
 | message_suffix | 消息后缀 | 空 |

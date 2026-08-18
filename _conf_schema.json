@@ -23,6 +23,12 @@
     "default": [],
     "hint": "接收消息的目标 QQ 群号列表，支持多个群，请输入数字，每行一个"
   },
+  "target_sessions": {
+    "description": "目标群会话标识",
+    "type": "list",
+    "default": [],
+    "hint": "由 /开启消息 自动维护，用于确保消息发送到正确的平台和群聊"
+  },
   "enable_forward": {
     "description": "启用消息转发",
     "type": "bool",

@@ -6,7 +6,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 import astrbot.api.message_components as Comp
 
-@register("msg_hook", "MinecraftNekoServer", "HTTP 消息转发插件", "1.1.1")
+@register("msg_hook", "MinecraftNekoServer", "HTTP 消息转发插件", "1.1.2")
 class MsgHookPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -71,13 +71,15 @@ class MsgHookPlugin(Star):
                 return web.json_response({'success': False, 'error': '消息内容不能为空'}, status=400)
 
             target_groups = self.get_config_value('target_groups', [])
+            target_sessions = self.get_config_value('target_sessions', [])
             logger.info(f"读取到的配置 target_groups: {target_groups}, 类型: {type(target_groups)}")
+            logger.info(f"读取到的配置 target_sessions: {target_sessions}, 类型: {type(target_sessions)}")
             
             # 转换群号为整数
             target_groups = [int(g) for g in target_groups if g]
             logger.info(f"转换后的 target_groups: {target_groups}")
             
-            if not target_groups:
+            if not target_groups and not target_sessions:
                 return web.json_response({'success': False, 'error': '未配置目标群号'}, status=400)
 
             # 添加前缀和后缀
@@ -85,9 +87,33 @@ class MsgHookPlugin(Star):
             suffix = self.get_config_value('message_suffix', '')
             full_message = f"{prefix}{message}{suffix}"
 
-            # 转发消息到所有目标群
+            # 优先使用由 /开启消息 保存的 UMO，以确保消息发送到正确的平台和群聊。
+            target_sessions = [str(session) for session in target_sessions if session]
+            session_group_ids = set()
+            for session in target_sessions:
+                parts = session.rsplit(':', 2)
+                if len(parts) == 3 and parts[1] == 'GroupMessage':
+                    try:
+                        session_group_ids.add(int(parts[2]))
+                    except ValueError:
+                        pass
+
+            # 尚未保存 UMO 的旧配置继续使用原有发送方式。
+            legacy_groups = [
+                group_id for group_id in target_groups
+                if group_id not in session_group_ids
+            ]
+            total_count = len(target_sessions) + len(legacy_groups)
             success_count = 0
-            for group_id in target_groups:
+            for session in target_sessions:
+                try:
+                    result = await self.send_to_session(session, full_message)
+                    if result:
+                        success_count += 1
+                except Exception as e:
+                    logger.error(f"发送消息到会话 {session} 失败: {e}")
+
+            for group_id in legacy_groups:
                 try:
                     result = await self.send_to_group(group_id, full_message)
                     if result:
@@ -96,10 +122,10 @@ class MsgHookPlugin(Star):
                     logger.error(f"发送消息到群 {group_id} 失败: {e}")
 
             if success_count > 0:
-                logger.info(f"消息已发送到 {success_count}/{len(target_groups)} 个群")
+                logger.info(f"消息已发送到 {success_count}/{total_count} 个目标")
                 return web.json_response({
                     'success': True,
-                    'message': f'消息已发送到 {success_count}/{len(target_groups)} 个群'
+                    'message': f'消息已发送到 {success_count}/{total_count} 个目标'
                 })
             else:
                 return web.json_response({'success': False, 'error': '所有群发送失败'}, status=500)
@@ -113,6 +139,7 @@ class MsgHookPlugin(Star):
         return web.json_response({
             'status': 'ok',
             'target_groups': self.get_config_value('target_groups', []),
+            'target_sessions': self.get_config_value('target_sessions', []),
             'server': {
                 'host': self.get_config_value('server_host', '127.0.0.1'),
                 'port': self.get_config_value('server_port', 8080)
@@ -121,7 +148,7 @@ class MsgHookPlugin(Star):
         })
 
     async def send_to_group(self, group_id: int, message: str):
-        """发送消息到指定群"""
+        """向旧版群号配置发送消息。"""
         try:
             # 获取平台适配器实例，使用第一个可用的平台
             platforms = self.context.platform_manager.platform_insts
@@ -140,6 +167,16 @@ class MsgHookPlugin(Star):
             return True
         except Exception as e:
             logger.error(f"发送群消息失败: {e}")
+            return False
+
+    async def send_to_session(self, session: str, message: str):
+        """按 AstrBot 的统一消息来源（UMO）发送消息。"""
+        try:
+            message_chain = MessageChain(chain=[Comp.Plain(message)])
+            await self.context.send_message(session, message_chain)
+            return True
+        except Exception as e:
+            logger.error(f"发送会话消息失败: {e}")
             return False
 
     async def terminate(self):
@@ -193,12 +230,19 @@ class MsgHookPlugin(Star):
             except (TypeError, ValueError):
                 logger.warning(f"忽略无效的目标群号配置: {target_group}")
 
-        if group_id in normalized_groups:
+        target_sessions = self.get_config_value('target_sessions', [])
+        current_session = event.unified_msg_origin
+        group_already_enabled = group_id in normalized_groups
+        session_already_enabled = not current_session or current_session in target_sessions
+        if group_already_enabled and session_already_enabled:
             yield event.plain_result("当前群聊已启用消息转发。")
             return
 
-        normalized_groups.append(group_id)
-        self.config['target_groups'] = normalized_groups
+        if not group_already_enabled:
+            normalized_groups.append(group_id)
+            self.config['target_groups'] = normalized_groups
+        if not session_already_enabled:
+            self.config['target_sessions'] = [*target_sessions, current_session]
         # 兼容未提供 save_config_async 的 AstrBot 版本，避免阻塞事件循环。
         await asyncio.to_thread(self.config.save_config)
         logger.info(f"已启用群 {group_id} 的消息转发")
