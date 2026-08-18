@@ -5,7 +5,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 import astrbot.api.message_components as Comp
 
-@register("msg_hook", "MinecraftNekoServer", "HTTP 消息转发插件", "1.0.0")
+@register("msg_hook", "MinecraftNekoServer", "HTTP 消息转发插件", "1.1.0")
 class MsgHookPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -169,3 +169,38 @@ class MsgHookPlugin(Star):
             f"Token 验证: {'启用' if has_token else '禁用'}"
         )
         yield event.plain_result(status_text)
+
+    @filter.command("开启消息")
+    async def enable_current_group(self, event: AstrMessageEvent):
+        """将当前群聊添加到消息转发目标列表。"""
+        group_id = event.get_group_id()
+        if not group_id:
+            yield event.plain_result("该指令仅可在群聊中使用。")
+            return
+
+        try:
+            group_id = int(group_id)
+        except (TypeError, ValueError):
+            logger.warning(f"无法识别当前群号: {group_id}")
+            yield event.plain_result("无法识别当前群号，开启失败。")
+            return
+
+        target_groups = self.get_config_value('target_groups', [])
+        # 兼容旧配置中可能存在的字符串群号。
+        normalized_groups = []
+        for target_group in target_groups:
+            try:
+                normalized_groups.append(int(target_group))
+            except (TypeError, ValueError):
+                logger.warning(f"忽略无效的目标群号配置: {target_group}")
+
+        if group_id in normalized_groups:
+            yield event.plain_result("当前群聊已启用消息转发。")
+            return
+
+        normalized_groups.append(group_id)
+        self.config['target_groups'] = normalized_groups
+        # 兼容未提供 save_config_async 的 AstrBot 版本，避免阻塞事件循环。
+        await asyncio.to_thread(self.config.save_config)
+        logger.info(f"已启用群 {group_id} 的消息转发")
+        yield event.plain_result("已在当前群聊启用消息转发。")
