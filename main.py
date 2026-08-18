@@ -1,11 +1,12 @@
 import asyncio
+import hmac
 from aiohttp import web
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 import astrbot.api.message_components as Comp
 
-@register("msg_hook", "MinecraftNekoServer", "HTTP 消息转发插件", "1.1.0")
+@register("msg_hook", "MinecraftNekoServer", "HTTP 消息转发插件", "1.1.1")
 class MsgHookPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -43,16 +44,14 @@ class MsgHookPlugin(Star):
         logger.info(f"消息转发: {'启用' if self.get_config_value('enable_forward', True) else '禁用'}")
 
     def verify_token(self, request: web.Request) -> bool:
-        """验证 API Token"""
+        """验证 API Token，兼容 ``Bearer <token>`` 和直接传入 token。"""
         token = self.get_config_value('api_token', '')
         if not token:
             return True
-        
+
         auth_header = request.headers.get('Authorization', '')
-        if auth_header.startswith('Bearer '):
-            return auth_header[7:] == token
-        
-        return False
+        supplied_token = auth_header[7:] if auth_header.startswith('Bearer ') else auth_header
+        return hmac.compare_digest(supplied_token, str(token))
 
     async def handle_send_request(self, request: web.Request):
         """处理发送消息的 HTTP 请求"""

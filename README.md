@@ -92,6 +92,12 @@ curl http://127.0.0.1:8080/health
 Authorization: Bearer YOUR_TOKEN
 ```
 
+也兼容直接传入令牌的写法：
+
+```
+Authorization: YOUR_TOKEN
+```
+
 ## 示例场景
 
 ### Python 示例
