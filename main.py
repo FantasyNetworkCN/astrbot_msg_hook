@@ -6,7 +6,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 import astrbot.api.message_components as Comp
 
-@register("msg_hook", "MinecraftNekoServer", "HTTP 消息转发插件", "1.1.2")
+@register("msg_hook", "MinecraftNekoServer", "HTTP 消息转发插件", "1.1.3")
 class MsgHookPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -21,8 +21,12 @@ class MsgHookPlugin(Star):
 
     def get_config_value(self, key, default=None):
         """获取配置值"""
-        logger.info(f"请求的键: {key}, 值: {self.config.get(key, default)}")
-        return self.config.get(key, default)
+        value = self.config.get(key, default)
+        if key == 'api_token':
+            logger.info(f"读取配置 api_token: {'已设置' if value else '未设置'}")
+        else:
+            logger.info(f"读取配置 {key}: {value}")
+        return value
 
     async def start_http_server(self):
         """启动 HTTP 服务器"""
@@ -56,19 +60,25 @@ class MsgHookPlugin(Star):
     async def handle_send_request(self, request: web.Request):
         """处理发送消息的 HTTP 请求"""
         try:
+            logger.info(f"收到 /send 请求，来源: {request.remote or '未知'}")
             # 验证 Token
             if not self.verify_token(request):
+                logger.warning("/send 请求鉴权失败")
                 return web.json_response({'success': False, 'error': '未授权访问'}, status=401)
+            logger.info("/send 请求鉴权通过")
 
             # 检查是否启用转发
             if not self.get_config_value('enable_forward', True):
+                logger.warning("/send 请求被拒绝：消息转发功能已禁用")
                 return web.json_response({'success': False, 'error': '消息转发功能已禁用'}, status=403)
 
             data = await request.json()
             message = data.get('message', '')
             
             if not message:
+                logger.warning("/send 请求被拒绝：消息内容为空")
                 return web.json_response({'success': False, 'error': '消息内容不能为空'}, status=400)
+            logger.info(f"/send 消息解析成功，长度: {len(str(message))}")
 
             target_groups = self.get_config_value('target_groups', [])
             target_sessions = self.get_config_value('target_sessions', [])
@@ -80,6 +90,7 @@ class MsgHookPlugin(Star):
             logger.info(f"转换后的 target_groups: {target_groups}")
             
             if not target_groups and not target_sessions:
+                logger.warning("/send 请求被拒绝：未配置任何目标群或会话")
                 return web.json_response({'success': False, 'error': '未配置目标群号'}, status=400)
 
             # 添加前缀和后缀
@@ -104,6 +115,10 @@ class MsgHookPlugin(Star):
                 if group_id not in session_group_ids
             ]
             total_count = len(target_sessions) + len(legacy_groups)
+            logger.info(
+                f"准备发送消息：UMO 目标={target_sessions}，"
+                f"兼容群号目标={legacy_groups}，总数={total_count}"
+            )
             success_count = 0
             for session in target_sessions:
                 try:
@@ -111,7 +126,7 @@ class MsgHookPlugin(Star):
                     if result:
                         success_count += 1
                 except Exception as e:
-                    logger.error(f"发送消息到会话 {session} 失败: {e}")
+                    logger.exception(f"发送消息到会话 {session} 失败")
 
             for group_id in legacy_groups:
                 try:
@@ -119,7 +134,7 @@ class MsgHookPlugin(Star):
                     if result:
                         success_count += 1
                 except Exception as e:
-                    logger.error(f"发送消息到群 {group_id} 失败: {e}")
+                    logger.exception(f"发送消息到群 {group_id} 失败")
 
             if success_count > 0:
                 logger.info(f"消息已发送到 {success_count}/{total_count} 个目标")
@@ -128,10 +143,11 @@ class MsgHookPlugin(Star):
                     'message': f'消息已发送到 {success_count}/{total_count} 个目标'
                 })
             else:
+                logger.error("所有目标均发送失败")
                 return web.json_response({'success': False, 'error': '所有群发送失败'}, status=500)
 
         except Exception as e:
-            logger.error(f"处理请求时发生错误: {e}")
+            logger.exception("处理 /send 请求时发生未捕获异常")
             return web.json_response({'success': False, 'error': str(e)}, status=500)
 
     async def handle_health_check(self, request: web.Request):
@@ -161,22 +177,25 @@ class MsgHookPlugin(Star):
             
             # 构造 session 字符串: platform_id:GroupMessage:group_id
             session_str = f"{platform_id}:GroupMessage:{group_id}"
-            
+            logger.info(f"准备通过兼容群号方式发送：平台={platform_id}，会话={session_str}")
             message_chain = MessageChain(chain=[Comp.Plain(message)])
             result = await self.context.send_message(session_str, message_chain)
-            return True
+            logger.info(f"兼容群号发送调用完成：会话={session_str}，返回值={result!r}")
+            return result is not False
         except Exception as e:
-            logger.error(f"发送群消息失败: {e}")
+            logger.exception(f"兼容群号发送失败：群号={group_id}")
             return False
 
     async def send_to_session(self, session: str, message: str):
         """按 AstrBot 的统一消息来源（UMO）发送消息。"""
         try:
+            logger.info(f"准备按 UMO 发送消息：会话={session}")
             message_chain = MessageChain(chain=[Comp.Plain(message)])
-            await self.context.send_message(session, message_chain)
-            return True
+            result = await self.context.send_message(session, message_chain)
+            logger.info(f"UMO 发送调用完成：会话={session}，返回值={result!r}")
+            return result is not False
         except Exception as e:
-            logger.error(f"发送会话消息失败: {e}")
+            logger.exception(f"UMO 发送失败：会话={session}")
             return False
 
     async def terminate(self):
